@@ -1,4 +1,7 @@
 #include "avro_reader.hpp"
+#include "utf8proc_wrapper.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/common/multi_file/multi_file_data.hpp"
 
 namespace duckdb {
 
@@ -99,14 +102,13 @@ static AvroType TransformSchema(avro_schema_t &avro_schema, unordered_set<string
 	}
 }
 
-AvroReader::AvroReader(ClientContext &context, const string filename_p) {
-	filename = filename_p;
+AvroReader::AvroReader(ClientContext &context, string filename_p) : BaseFileReader(std::move(filename_p)) {
 	auto &fs = FileSystem::GetFileSystem(context);
-	if (!fs.FileExists(filename)) {
-		throw InvalidInputException("Avro file %s not found", filename);
+	if (!fs.FileExists(file_name)) {
+		throw InvalidInputException("Avro file %s not found", file_name);
 	}
 
-	auto file = fs.OpenFile(filename, FileOpenFlags::FILE_FLAGS_READ);
+	auto file = fs.OpenFile(file_name, FileOpenFlags::FILE_FLAGS_READ);
 	allocated_data = Allocator::Get(context).Allocate(file->GetFileSize());
 	auto n_read = file->Read(allocated_data.get(), allocated_data.GetSize());
 	D_ASSERT(n_read == file->GetFileSize());
@@ -118,23 +120,28 @@ AvroReader::AvroReader(ClientContext &context, const string filename_p) {
 
 	auto avro_schema = avro_file_reader_get_writer_schema(reader);
 	avro_type = TransformSchema(avro_schema, {});
-	duckdb_type = TransformAvroType(avro_type);
+	duckdb_type = AvroType::TransformAvroType(avro_type);
 	read_vec = make_uniq<Vector>(duckdb_type);
 
 	auto interface = avro_generic_class_from_schema(avro_schema);
 	avro_generic_value_new(interface, &value);
 	avro_value_iface_decref(interface);
 
+	vector<LogicalType> types;
+	vector<string> names;
 	// special handling for root structs, we pull up the entries
 	if (duckdb_type.id() == LogicalTypeId::STRUCT) {
 		for (idx_t child_idx = 0; child_idx < StructType::GetChildCount(duckdb_type); child_idx++) {
-			columns.push_back(MultiFileColumnDefinition(StructType::GetChildName(duckdb_type, child_idx),
-																StructType::GetChildType(duckdb_type, child_idx)));
+			names.push_back(StructType::GetChildName(duckdb_type, child_idx));
+			types.push_back(StructType::GetChildType(duckdb_type, child_idx));
 		}
 	} else {
 		auto schema_name = avro_schema_name(avro_schema);
-		columns.push_back(MultiFileColumnDefinition(schema_name ? schema_name : "avro_schema", duckdb_type));
+		names.push_back(schema_name ? schema_name : "avro_schema");
+		types.push_back(duckdb_type);
 	}
+
+	columns = MultiFileColumnDefinition::ColumnsFromNamesAndTypes(names, types);
 	avro_schema_decref(avro_schema);
 }
 
@@ -364,7 +371,7 @@ static void TransformValue(avro_value *avro_val, const AvroType &avro_type, Vect
 	}
 }
 
-void AvroReader::Read(DataChunk &output, const vector<ColumnIndex> &column_indexes) {
+void AvroReader::Read(DataChunk &output) {
 	idx_t out_idx = 0;
 
 	while (avro_file_reader_read_value(reader, &value) == 0) {
@@ -380,7 +387,7 @@ void AvroReader::Read(DataChunk &output, const vector<ColumnIndex> &column_index
 				continue; // to be filled in later
 			}
 			output.data[col_idx].Reference(
-				*StructVector::GetEntries(*read_vec)[column_indexes[col_idx].GetPrimaryIndex()]);
+			    *StructVector::GetEntries(*read_vec)[column_indexes[col_idx].GetPrimaryIndex()]);
 		}
 	} else {
 		output.data[column_indexes[0].GetPrimaryIndex()].Reference(*read_vec);

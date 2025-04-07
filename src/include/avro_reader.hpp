@@ -2,6 +2,7 @@
 
 #include "duckdb/common/helper.hpp"
 #include "avro_type.hpp"
+#include "duckdb/common/multi_file/base_file_reader.hpp"
 
 namespace duckdb {
 
@@ -13,20 +14,21 @@ public:
 	AvroUnionData() {
 		throw InternalException("union_by_name not supported");
 	}
+
 public:
 	const string &GetFileName() {
 		return file_name;
 	}
+
 public:
 	string file_name;
 	vector<string> names;
 	vector<LogicalType> types;
-	//AvroOptions options;
+	// AvroOptions options;
 	unique_ptr<AvroReader> reader;
 };
 
-struct AvroReader {
-	using UNION_READER_DATA = unique_ptr<AvroUnionData>;
+struct AvroReader : public BaseFileReader {
 public:
 	AvroReader(ClientContext &context, const string filename_p);
 
@@ -35,19 +37,12 @@ public:
 		avro_file_reader_close(reader);
 	}
 public:
-	static unique_ptr<AvroUnionData> StoreUnionReader(unique_ptr<AvroReader> scan_p, idx_t file_idx) {
-		throw InternalException("union_by_name not supported");
-	}
-public:
-	void Read(DataChunk &output, const vector<ColumnIndex> &column_indexes);
+	void Read(DataChunk &output);
 
-	const string &GetFileName() {
-		return filename;
+	string GetReaderType() const override {
+		return "Avro";
 	}
 
-	const vector<MultiFileColumnDefinition> &GetColumns() {
-		return columns;
-	}
 public:
 	avro_file_reader_t reader;
 	avro_value_t value;
@@ -56,9 +51,6 @@ public:
 	AllocatedData allocated_data;
 	AvroType avro_type;
 	LogicalType duckdb_type;
-	vector<MultiFileColumnDefinition> columns;
-	MultiFileReaderData reader_data;
-	string filename;
 };
 
 } // namespace duckdb
