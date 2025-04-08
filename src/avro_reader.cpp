@@ -115,7 +115,7 @@ AvroReader::AvroReader(ClientContext &context, string filename_p) : BaseFileRead
 		auto len = file->Read(allocated_data.get() + n_read, allocated_data.GetSize() - n_read);
 		n_read += len;
 		if (len == 0) {
-			throw InvalidInputException("Could not read from file '%s'", filename);
+			throw InvalidInputException("Could not read from file '%s'", file_name);
 		}
 	}
 	D_ASSERT(n_read == file->GetFileSize());
