@@ -36,6 +36,7 @@ public:
 		avro_value_decref(&value);
 		avro_file_reader_close(reader);
 	}
+
 public:
 	void Read(DataChunk &output);
 
